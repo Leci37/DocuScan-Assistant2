@@ -24,6 +24,12 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
   private detectionStableCount = 0;
   private readonly STABLE_THRESHOLD = 5; // Number of consecutive frames needed
 
+  // --- NEW PROPERTIES FOR STABILITY ---
+  isSteady = false; // Is the document held steady?
+  private lastKnownCorners: number[] | null = null; // Store the last corner positions
+  private readonly CORNER_MOVEMENT_THRESHOLD = 5; // Max pixels corners can move between frames
+  // --- END NEW ---
+
   constructor(@Inject(PLATFORM_ID) private platformId: Object) {}
 
   async ngAfterViewInit() {
@@ -134,40 +140,30 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     processFrame();
   }
 
-// In src/app/scan/scan.component.ts
-
-private detectDocument() {
+  private detectDocument() {
     const video = this.videoElement.nativeElement;
     const canvas = this.canvasElement.nativeElement;
     const ctx = canvas.getContext('2d');
 
     if (!ctx || !this.opencvLoaded) return;
 
-    if (video.readyState !== video.HAVE_ENOUGH_DATA || 
-        video.videoWidth === 0 || 
+    if (video.readyState !== video.HAVE_ENOUGH_DATA ||
+        video.videoWidth === 0 ||
         video.videoHeight === 0) {
       return;
     }
 
-    let src: any = null;
-    let gray: any = null;
-    let blurred: any = null;
-    let edges: any = null;
-    let hierarchy: any = null;
-    let contours: any = null;
+    let src: any = null, gray: any = null, blurred: any = null, edges: any = null,
+        hierarchy: any = null, contours: any = null;
 
     try {
       src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-      
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = video.videoWidth;
       tempCanvas.height = video.videoHeight;
       const tempCtx = tempCanvas.getContext('2d');
-      
       if (!tempCtx) return;
-      
       tempCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-      
       const imageData = tempCtx.getImageData(0, 0, video.videoWidth, video.videoHeight);
       src.data.set(imageData.data);
 
@@ -176,22 +172,18 @@ private detectDocument() {
 
       blurred = new cv.Mat();
       cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-      
-      // --- NEW: Dynamic Threshold Calculation ---
-      // This makes the edge detection adaptive to lighting conditions.
+
       const medianMat = new cv.Mat();
-      // Using a larger kernel size for median blur helps find a more representative median value for the whole image.
-      cv.medianBlur(gray, medianMat, 15); 
+      cv.medianBlur(gray, medianMat, 15);
       const medianValue = medianMat.data[Math.floor(medianMat.rows * medianMat.cols / 2)];
       medianMat.delete();
-      
+
       const sigma = 0.33;
       const lowerThreshold = Math.max(0, (1.0 - sigma) * medianValue);
       const upperThreshold = Math.min(255, (1.0 + sigma) * medianValue);
-      
+
       edges = new cv.Mat();
       cv.Canny(blurred, edges, lowerThreshold, upperThreshold);
-      // --- END NEW ---
 
       contours = new cv.MatVector();
       hierarchy = new cv.Mat();
@@ -208,7 +200,6 @@ private detectDocument() {
         const area = cv.contourArea(contour);
         const peri = cv.arcLength(contour, true);
         const approx = new cv.Mat();
-
         cv.approxPolyDP(contour, approx, 0.02 * peri, true);
 
         if (approx.rows === 4 && area > maxArea && area > 10000) {
@@ -219,43 +210,62 @@ private detectDocument() {
           approx.delete();
         }
       }
-      
-      if (bestContour) {
-        this.detectionStableCount++;
-        
-        if (this.detectionStableCount >= this.STABLE_THRESHOLD) {
-          this.documentDetected = true;
-        }
 
-        ctx.strokeStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
+      if (bestContour) {
+        this.documentDetected = true;
+        const currentCorners = Array.from<number>(bestContour.data32S as Int32Array);
+
+        // --- STABILITY CHECK LOGIC ---
+        if (this.lastKnownCorners) {
+          let totalDistance = 0;
+          for (let i = 0; i < 4; i++) {
+            const dx = currentCorners[i * 2] - this.lastKnownCorners[i * 2];
+            const dy = currentCorners[i * 2 + 1] - this.lastKnownCorners[i * 2 + 1];
+            totalDistance += Math.sqrt(dx * dx + dy * dy);
+          }
+
+          if (totalDistance < this.CORNER_MOVEMENT_THRESHOLD * 4) {
+            this.detectionStableCount++;
+          } else {
+            this.detectionStableCount = 0;
+          }
+        } else {
+          this.detectionStableCount = 0;
+        }
+        this.lastKnownCorners = currentCorners;
+        // --- END STABILITY CHECK ---
+
+        this.isSteady = this.detectionStableCount >= this.STABLE_THRESHOLD;
+
+        const color = this.isSteady ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
+        ctx.strokeStyle = color;
         ctx.lineWidth = 4;
-        ctx.fillStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 255, 0, 0.2)';
+        ctx.fillStyle = this.isSteady ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 255, 0, 0.2)';
 
         ctx.beginPath();
-        const firstPoint = bestContour.data32S;
-        ctx.moveTo(firstPoint[0], firstPoint[1]);
-
+        ctx.moveTo(currentCorners[0], currentCorners[1]);
         for (let i = 1; i < 4; i++) {
-          ctx.lineTo(firstPoint[i * 2], firstPoint[i * 2 + 1]);
+          ctx.lineTo(currentCorners[i * 2], currentCorners[i * 2 + 1]);
         }
-
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
-        
-        ctx.fillStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
+
+        ctx.fillStyle = color;
         for (let i = 0; i < 4; i++) {
           ctx.beginPath();
-          ctx.arc(firstPoint[i * 2], firstPoint[i * 2 + 1], 8, 0, 2 * Math.PI);
+          ctx.arc(currentCorners[i * 2], currentCorners[i * 2 + 1], 8, 0, 2 * Math.PI);
           ctx.fill();
         }
 
         bestContour.delete();
       } else {
-        this.detectionStableCount = 0;
+        // Reset everything if no document is found
         this.documentDetected = false;
+        this.isSteady = false;
+        this.detectionStableCount = 0;
+        this.lastKnownCorners = null;
       }
-
     } catch (error) {
       console.error('Error in detectDocument:', error);
       this.documentDetected = false;
@@ -285,8 +295,8 @@ private detectDocument() {
 
   // Public method for template
   captureImage() {
-    if (!this.documentDetected) {
-      console.warn('No document detected');
+    if (!this.isSteady) {
+      console.warn('Document not steady yet');
       return;
     }
 
