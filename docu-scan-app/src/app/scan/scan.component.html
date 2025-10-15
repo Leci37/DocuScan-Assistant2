@@ -1,13 +1,46 @@
-<div class="scanner-container">
-  <video #video autoplay playsinline></video>
-  <canvas #canvas></canvas>
-  
-  <div class="controls">
-    <button (click)="captureImage()" [disabled]="!documentDetected">
-      Capture Document
-    </button>
-    <div class="status" *ngIf="documentDetected">
-      ✓ Document detected
+<div class="scanner-container" [class.flash-active]="captureAnimationActive">
+  <video #video autoplay playsinline muted></video>
+  <canvas #canvas class="overlay" [class.capture]="captureInProgress"></canvas>
+
+  <div class="hud">
+    <div class="score" [ngClass]="polygonState">
+      <span class="label">Score</span>
+      <span class="value">{{ qualityScore | number:'1.0-0' }}%</span>
+    </div>
+
+    <div class="metrics">
+      <div class="metric">
+        <span class="metric-label">Stability</span>
+        <span class="metric-value">{{ edgeStabilityScore | number:'1.0-0' }}%</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Sharpness</span>
+        <span class="metric-value">{{ sharpnessScore | number:'1.0-0' }}%</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Lighting</span>
+        <span class="metric-value">{{ exposureScore | number:'1.0-0' }}%</span>
+      </div>
+    </div>
+
+    <div class="status-message">
+      {{ statusMessage }}
+      <span *ngIf="countdownSeconds !== null"> · {{ countdownSeconds | number:'1.0-1' }}s</span>
     </div>
   </div>
+
+  <button
+    class="manual-capture"
+    type="button"
+    (click)="captureImage()"
+    [disabled]="!documentDetected || captureInProgress"
+  >
+    Capture document
+  </button>
+
+  <div class="capture-toast" *ngIf="showCaptureToast">
+    Document captured
+  </div>
+
+  <div class="flash-overlay" *ngIf="captureAnimationActive"></div>
 </div>
