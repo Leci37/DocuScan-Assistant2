@@ -77,7 +77,7 @@ Here is a summary of the steps we have completed so far to get the live document
     ```css
     .scanner-container {
       position: relative;
-    }
+    } 
     canvas {
       position: absolute;
       top: 0;
