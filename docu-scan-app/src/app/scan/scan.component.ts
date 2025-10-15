@@ -95,7 +95,11 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
       });
 
       video.srcObject = this.stream;
-      video.onloadedmetadata = async () => {
+
+      // --- FIX STARTS HERE ---
+      // Use 'oncanplay' which is more reliable for getting stable video dimensions.
+      video.oncanplay = async () => {
+        // --- FIX ENDS HERE ---
         try {
           await video.play();
           this.streaming = true;
