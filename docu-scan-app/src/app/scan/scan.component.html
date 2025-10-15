@@ -3,11 +3,14 @@
   <canvas #canvas></canvas>
   
   <div class="controls">
-    <button (click)="captureImage()" [disabled]="!documentDetected">
+    <button (click)="captureImage()" [disabled]="!isSteady">
       Capture Document
     </button>
-    <div class="status" *ngIf="documentDetected">
-      ✓ Document detected
+    <div class="status" *ngIf="documentDetected && !isSteady">
+      Hold steady...
+    </div>
+    <div class="status" *ngIf="isSteady">
+      ✓ Ready to capture
     </div>
   </div>
 </div>
