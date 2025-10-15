@@ -1,7 +1,20 @@
 import { Component, ElementRef, ViewChild, OnDestroy, AfterViewInit, PLATFORM_ID, Inject } from '@angular/core';
 import { isPlatformBrowser, CommonModule } from '@angular/common';
-
-declare var cv: any;
+import { CameraService } from './camera.service';
+import { DetectionResult, OpenCVService } from './opencv.service';
+import {
+  CAPTURE_FLASH_COLOR,
+  CAPTURE_FLASH_DURATION_MS,
+  CORNER_MARKER_RADIUS,
+  CORNER_MOVEMENT_THRESHOLD,
+  DETECTION_STROKE_WIDTH,
+  DOCUMENT_CORNER_COUNT,
+  STABLE_THRESHOLD,
+  STEADY_FILL_STYLE,
+  STEADY_STROKE_STYLE,
+  UNSTEADY_FILL_STYLE,
+  UNSTEADY_STROKE_STYLE
+} from './scanner-config';
 
 @Component({
   selector: 'app-scan',
@@ -17,91 +30,41 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
   private stream: MediaStream | null = null;
   private animationId: number | null = null;
   private isProcessing = false;
-  private opencvLoaded = false;
 
-  // Public properties for template
   documentDetected = false;
+  isSteady = false;
+
   private detectionStableCount = 0;
-  private readonly STABLE_THRESHOLD = 5; // Number of consecutive frames needed
+  private lastKnownCorners: number[] | null = null;
 
-  // --- NEW PROPERTIES FOR STABILITY ---
-  isSteady = false; // Is the document held steady?
-  private lastKnownCorners: number[] | null = null; // Store the last corner positions
-  private readonly CORNER_MOVEMENT_THRESHOLD = 5; // Max pixels corners can move between frames
-  // --- END NEW ---
+  constructor(
+    @Inject(PLATFORM_ID) private readonly platformId: Object,
+    private readonly cameraService: CameraService,
+    private readonly openCVService: OpenCVService
+  ) {}
 
-  constructor(@Inject(PLATFORM_ID) private platformId: Object) {}
+  async ngAfterViewInit(): Promise<void> {
+    if (!isPlatformBrowser(this.platformId)) {
+      return;
+    }
 
-  async ngAfterViewInit() {
-    if (isPlatformBrowser(this.platformId)) {
-      await this.waitForOpenCV();
+    try {
+      await this.openCVService.loadOpenCV();
       await this.startCamera();
+    } catch (error) {
+      console.error('Initialization error:', error);
     }
   }
 
-  ngOnDestroy() {
+  ngOnDestroy(): void {
     this.cleanup();
   }
 
-  private async waitForOpenCV(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Check if OpenCV is already loaded
-      if (typeof cv !== 'undefined' && cv.Mat) {
-        console.log('OpenCV.js already loaded');
-        this.opencvLoaded = true;
-        resolve();
-        return;
-      }
-
-      // Set up timeout (30 seconds)
-      const timeout = setTimeout(() => {
-        reject(new Error('OpenCV.js did not load in time. Check your internet connection and OpenCV.js URL.'));
-      }, 30000);
-
-      // Wait for OpenCV to load
-      const checkInterval = setInterval(() => {
-        if (typeof cv !== 'undefined' && cv.Mat) {
-          clearInterval(checkInterval);
-          clearTimeout(timeout);
-          console.log('OpenCV.js loaded successfully');
-          this.opencvLoaded = true;
-          resolve();
-        }
-      }, 100);
-    });
-  }
-
-  private async startCamera() {
+  private async startCamera(): Promise<void> {
     try {
-      if (!this.opencvLoaded) {
-        throw new Error('OpenCV.js is not loaded');
-      }
-
-      // Request camera with specific constraints
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'environment', // Use back camera on mobile
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-
       const video = this.videoElement.nativeElement;
-      video.srcObject = this.stream;
-
-      // Wait for video metadata to load
-      await new Promise<void>((resolve) => {
-        video.onloadedmetadata = () => {
-          video.play();
-          console.log(`Video dimensions: ${video.videoWidth}x${video.videoHeight}`);
-          resolve();
-        };
-      });
-
-      // Additional small delay to ensure video is fully ready
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Initialize processing after video is ready
+      this.stream = await this.cameraService.startCamera(video);
+      console.log(`Video dimensions: ${video.videoWidth}x${video.videoHeight}`);
       this.initializeProcessing();
     } catch (error) {
       console.error('Unable to start camera:', error);
@@ -109,17 +72,13 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private initializeProcessing() {
+  private initializeProcessing(): void {
     const video = this.videoElement.nativeElement;
     const canvas = this.canvasElement.nativeElement;
 
-    // Set canvas dimensions to match video
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
 
-    console.log(`Canvas set to: ${canvas.width}x${canvas.height}`);
-
-    // Start processing frames
     const processFrame = () => {
       if (this.isProcessing) {
         this.animationId = requestAnimationFrame(processFrame);
@@ -128,7 +87,9 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
 
       try {
         this.isProcessing = true;
-        this.detectDocument();
+        const result = this.openCVService.processFrame(video);
+        this.updateDetectionState(result);
+        this.drawOverlay(result.corners);
       } catch (error) {
         console.error('Processing error:', error);
       } finally {
@@ -140,161 +101,84 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     processFrame();
   }
 
-  private detectDocument() {
-    const video = this.videoElement.nativeElement;
-    const canvas = this.canvasElement.nativeElement;
-    const ctx = canvas.getContext('2d');
+  private updateDetectionState(result: DetectionResult): void {
+    const corners = result.corners;
 
-    if (!ctx || !this.opencvLoaded) return;
+    if (corners && corners.length >= DOCUMENT_CORNER_COUNT * 2) {
+      const currentCorners = [...corners];
+      this.documentDetected = true;
 
-    if (video.readyState !== video.HAVE_ENOUGH_DATA ||
-        video.videoWidth === 0 ||
-        video.videoHeight === 0) {
-      return;
-    }
-
-    let src: any = null, gray: any = null, blurred: any = null, edges: any = null,
-        hierarchy: any = null, contours: any = null;
-
-    try {
-      src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = video.videoWidth;
-      tempCanvas.height = video.videoHeight;
-      const tempCtx = tempCanvas.getContext('2d');
-      if (!tempCtx) return;
-      tempCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-      const imageData = tempCtx.getImageData(0, 0, video.videoWidth, video.videoHeight);
-      src.data.set(imageData.data);
-
-      gray = new cv.Mat();
-      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-      blurred = new cv.Mat();
-      cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-
-      const medianMat = new cv.Mat();
-      cv.medianBlur(gray, medianMat, 15);
-      const medianValue = medianMat.data[Math.floor(medianMat.rows * medianMat.cols / 2)];
-      medianMat.delete();
-
-      const sigma = 0.33;
-      const lowerThreshold = Math.max(0, (1.0 - sigma) * medianValue);
-      const upperThreshold = Math.min(255, (1.0 + sigma) * medianValue);
-
-      edges = new cv.Mat();
-      cv.Canny(blurred, edges, lowerThreshold, upperThreshold);
-
-      contours = new cv.MatVector();
-      hierarchy = new cv.Mat();
-      cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      let maxArea = 0;
-      let bestContour: any = null;
-
-      for (let i = 0; i < contours.size(); i++) {
-        const contour = contours.get(i);
-        const area = cv.contourArea(contour);
-        const peri = cv.arcLength(contour, true);
-        const approx = new cv.Mat();
-        cv.approxPolyDP(contour, approx, 0.02 * peri, true);
-
-        if (approx.rows === 4 && area > maxArea && area > 10000) {
-          maxArea = area;
-          if (bestContour) bestContour.delete();
-          bestContour = approx;
-        } else {
-          approx.delete();
+      if (this.lastKnownCorners) {
+        let totalDistance = 0;
+        for (let i = 0; i < DOCUMENT_CORNER_COUNT; i++) {
+          const dx = currentCorners[i * 2] - this.lastKnownCorners[i * 2];
+          const dy = currentCorners[i * 2 + 1] - this.lastKnownCorners[i * 2 + 1];
+          totalDistance += Math.sqrt(dx * dx + dy * dy);
         }
-      }
 
-      if (bestContour) {
-        this.documentDetected = true;
-        const currentCorners = Array.from<number>(bestContour.data32S as Int32Array);
-
-        // --- STABILITY CHECK LOGIC ---
-        if (this.lastKnownCorners) {
-          let totalDistance = 0;
-          for (let i = 0; i < 4; i++) {
-            const dx = currentCorners[i * 2] - this.lastKnownCorners[i * 2];
-            const dy = currentCorners[i * 2 + 1] - this.lastKnownCorners[i * 2 + 1];
-            totalDistance += Math.sqrt(dx * dx + dy * dy);
-          }
-
-          if (totalDistance < this.CORNER_MOVEMENT_THRESHOLD * 4) {
-            this.detectionStableCount++;
-          } else {
-            this.detectionStableCount = 0;
-          }
+        if (totalDistance < CORNER_MOVEMENT_THRESHOLD * DOCUMENT_CORNER_COUNT) {
+          this.detectionStableCount++;
         } else {
           this.detectionStableCount = 0;
         }
-        this.lastKnownCorners = currentCorners;
-        // --- END STABILITY CHECK ---
-
-        this.isSteady = this.detectionStableCount >= this.STABLE_THRESHOLD;
-
-        const color = this.isSteady ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 4;
-        ctx.fillStyle = this.isSteady ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 255, 0, 0.2)';
-
-        ctx.beginPath();
-        ctx.moveTo(currentCorners[0], currentCorners[1]);
-        for (let i = 1; i < 4; i++) {
-          ctx.lineTo(currentCorners[i * 2], currentCorners[i * 2 + 1]);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = color;
-        for (let i = 0; i < 4; i++) {
-          ctx.beginPath();
-          ctx.arc(currentCorners[i * 2], currentCorners[i * 2 + 1], 8, 0, 2 * Math.PI);
-          ctx.fill();
-        }
-
-        bestContour.delete();
       } else {
-        // Reset everything if no document is found
-        this.documentDetected = false;
-        this.isSteady = false;
         this.detectionStableCount = 0;
-        this.lastKnownCorners = null;
       }
-    } catch (error) {
-      console.error('Error in detectDocument:', error);
-      this.documentDetected = false;
-    } finally {
-      if (src) src.delete();
-      if (gray) gray.delete();
-      if (blurred) blurred.delete();
-      if (edges) edges.delete();
-      if (hierarchy) hierarchy.delete();
-      if (contours) contours.delete();
-    }
-  }
-  
-  private cleanup() {
-    // Stop animation frame
-    if (this.animationId !== null) {
-      cancelAnimationFrame(this.animationId);
-      this.animationId = null;
-    }
 
-    // Stop video stream
-    if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
-      this.stream = null;
+      this.lastKnownCorners = currentCorners;
+      this.isSteady = this.detectionStableCount >= STABLE_THRESHOLD;
+    } else {
+      this.resetDetectionState();
     }
   }
 
-  // Public method for template
-  captureImage() {
+  private drawOverlay(corners: number[] | null): void {
+    const canvas = this.canvasElement.nativeElement;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    const video = this.videoElement.nativeElement;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    if (!corners || corners.length < DOCUMENT_CORNER_COUNT * 2) {
+      return;
+    }
+
+    const strokeStyle = this.isSteady ? STEADY_STROKE_STYLE : UNSTEADY_STROKE_STYLE;
+    const fillStyle = this.isSteady ? STEADY_FILL_STYLE : UNSTEADY_FILL_STYLE;
+
+    ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = DETECTION_STROKE_WIDTH;
+    ctx.fillStyle = fillStyle;
+
+    ctx.beginPath();
+    ctx.moveTo(corners[0], corners[1]);
+    for (let i = 1; i < DOCUMENT_CORNER_COUNT; i++) {
+      ctx.lineTo(corners[i * 2], corners[i * 2 + 1]);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = strokeStyle;
+    for (let i = 0; i < DOCUMENT_CORNER_COUNT; i++) {
+      ctx.beginPath();
+      ctx.arc(corners[i * 2], corners[i * 2 + 1], CORNER_MARKER_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  private resetDetectionState(): void {
+    this.documentDetected = false;
+    this.isSteady = false;
+    this.detectionStableCount = 0;
+    this.lastKnownCorners = null;
+  }
+
+  captureImage(): void {
     if (!this.isSteady) {
       console.warn('Document not steady yet');
       return;
@@ -302,30 +186,43 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
 
     const canvas = this.canvasElement.nativeElement;
     const dataUrl = canvas.toDataURL('image/png');
-    
-    console.log('Document captured');
-    
-    // Trigger download
+
     const link = document.createElement('a');
     link.download = `scan-${Date.now()}.png`;
     link.href = dataUrl;
     link.click();
 
-    // Provide user feedback
     this.showCaptureFlash();
   }
 
-  private showCaptureFlash() {
+  private showCaptureFlash(): void {
     const canvas = this.canvasElement.nativeElement;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) {
+      return;
+    }
 
-    // White flash effect
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fillStyle = CAPTURE_FLASH_COLOR;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     setTimeout(() => {
       // Flash will be cleared on next frame draw
-    }, 100);
+    }, CAPTURE_FLASH_DURATION_MS);
+  }
+
+  private cleanup(): void {
+    if (this.animationId !== null) {
+      cancelAnimationFrame(this.animationId);
+      this.animationId = null;
+    }
+
+    if (this.stream) {
+      this.cameraService.stopStream(this.stream);
+      const video = this.videoElement.nativeElement;
+      video.srcObject = null;
+      this.stream = null;
+    }
+
+    this.resetDetectionState();
   }
 }
