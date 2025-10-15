@@ -158,8 +158,15 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
 
   private detectDocument(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
     const resources = this.videoProcessingResources;
+    const video = this.videoRef.nativeElement;
 
     if (!resources) {
+      return;
+    }
+
+    if (resources.src.rows !== video.videoHeight || resources.src.cols !== video.videoWidth) {
+      console.warn('Video dimensions changed. Re-initializing processing resources.');
+      this.initializeProcessing();
       return;
     }
 
@@ -186,8 +193,6 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
         maxArea = area;
         largestContourIndex = i;
       }
-
-      contour.delete();
     }
 
     this.documentDetected = false;
@@ -234,6 +239,10 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
 
       approx.delete();
       largestContour.delete();
+    }
+
+    for (let i = 0; i < contours.size(); i++) {
+      contours.get(i).delete();
     }
   }
 
