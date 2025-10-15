@@ -39,6 +39,7 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
   private highQualityStartTime: number | null = null;
   private lastDetectedCorners: Point[] | null = null;
   private cornerHistory: Point[][] = [];
+  private resizeListener: (() => void) | null = null;
 
   private readonly AUTO_CAPTURE_THRESHOLD = 85;
   private readonly AUTO_CAPTURE_DURATION = 3000;
@@ -179,10 +180,28 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     const video = this.videoElement.nativeElement;
     const canvas = this.canvasElement.nativeElement;
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
+    const syncCanvasSize = () => {
+      const displayWidth = video.clientWidth || video.videoWidth;
+      const displayHeight = video.clientHeight || video.videoHeight;
+
+      if (!displayWidth || !displayHeight) {
+        return;
+      }
+
+      canvas.width = displayWidth;
+      canvas.height = displayHeight;
+      canvas.style.width = `${displayWidth}px`;
+      canvas.style.height = `${displayHeight}px`;
+    };
+
+    syncCanvasSize();
+
+    if (this.resizeListener) {
+      window.removeEventListener('resize', this.resizeListener);
+    }
+
+    this.resizeListener = syncCanvasSize;
+    window.addEventListener('resize', syncCanvasSize);
 
     this.overlayCtx = canvas.getContext('2d');
     if (!this.overlayCtx) {
@@ -225,7 +244,6 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     }
 
     const video = this.videoElement.nativeElement;
-    const canvas = this.canvasElement.nativeElement;
 
     if (
       video.readyState !== video.HAVE_ENOUGH_DATA ||
@@ -241,7 +259,8 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     let src: any;
     let gray: any;
     let blurred: any;
-    let edges: any;
+    let thresholded: any;
+    let morphed: any;
     let contours: any;
     let hierarchy: any;
 
@@ -253,40 +272,40 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
       blurred = new cv.Mat();
       cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
 
-      const mean = new cv.Mat();
-      const stddev = new cv.Mat();
-      cv.meanStdDev(gray, mean, stddev);
-      const meanValue = mean.data64F[0] || 0;
-      const sigma = 0.33;
-      const lowerThreshold = Math.max(0, (1.0 - sigma) * meanValue);
-      const upperThreshold = Math.min(255, (1.0 + sigma) * meanValue);
-      mean.delete();
-      stddev.delete();
+      thresholded = new cv.Mat();
+      cv.adaptiveThreshold(
+        blurred,
+        thresholded,
+        255,
+        cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv.THRESH_BINARY,
+        11,
+        2
+      );
+      cv.bitwise_not(thresholded, thresholded);
 
-      edges = new cv.Mat();
-      cv.Canny(blurred, edges, lowerThreshold, upperThreshold);
+      const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+      morphed = new cv.Mat();
+      cv.morphologyEx(thresholded, morphed, cv.MORPH_CLOSE, kernel);
+      kernel.delete();
 
       contours = new cv.MatVector();
       hierarchy = new cv.Mat();
-      cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      cv.findContours(morphed, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
       let bestContour: any = null;
       let maxArea = 0;
+      const frameArea = video.videoWidth * video.videoHeight;
+      const minArea = frameArea * 0.1;
 
       for (let i = 0; i < contours.size(); i++) {
         const contour = contours.get(i);
-        const area = cv.contourArea(contour);
-
-        if (area < 10000) {
-          contour.delete();
-          continue;
-        }
-
         const peri = cv.arcLength(contour, true);
         const approx = new cv.Mat();
         cv.approxPolyDP(contour, approx, 0.02 * peri, true);
+        const area = Math.abs(cv.contourArea(approx));
 
-        if (approx.rows === 4 && area > maxArea) {
+        if (approx.rows === 4 && cv.isContourConvex(approx) && area > minArea && area > maxArea) {
           if (bestContour) {
             bestContour.delete();
           }
@@ -304,7 +323,11 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
         this.lastDetectedCorners = orderedCorners;
         this.documentDetected = true;
 
-        const stabilityScore = this.calculateStabilityScore(orderedCorners, canvas.width, canvas.height);
+        const stabilityScore = this.calculateStabilityScore(
+          orderedCorners,
+          video.videoWidth,
+          video.videoHeight
+        );
         const sharpnessScore = this.calculateSharpnessScore(gray);
         const exposureScore = this.calculateExposureScore(gray);
 
@@ -326,7 +349,8 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
       if (src) src.delete();
       if (gray) gray.delete();
       if (blurred) blurred.delete();
-      if (edges) edges.delete();
+      if (thresholded) thresholded.delete();
+      if (morphed) morphed.delete();
       if (contours) contours.delete();
       if (hierarchy) hierarchy.delete();
     }
@@ -367,14 +391,27 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     }
 
     const canvas = this.canvasElement.nativeElement;
+    const video = this.videoElement.nativeElement;
+
+    if (!video.videoWidth || !video.videoHeight) {
+      return;
+    }
+
+    const scaleX = canvas.width / video.videoWidth;
+    const scaleY = canvas.height / video.videoHeight;
+    const scaledCorners = corners.map((corner) => ({
+      x: corner.x * scaleX,
+      y: corner.y * scaleY
+    }));
+
     this.overlayCtx.clearRect(0, 0, canvas.width, canvas.height);
 
     const { strokeStyle, fillStyle, cornerFill } = this.getPolygonStyles();
 
     this.overlayCtx.beginPath();
-    this.overlayCtx.moveTo(corners[0].x, corners[0].y);
-    for (let i = 1; i < corners.length; i++) {
-      this.overlayCtx.lineTo(corners[i].x, corners[i].y);
+    this.overlayCtx.moveTo(scaledCorners[0].x, scaledCorners[0].y);
+    for (let i = 1; i < scaledCorners.length; i++) {
+      this.overlayCtx.lineTo(scaledCorners[i].x, scaledCorners[i].y);
     }
     this.overlayCtx.closePath();
 
@@ -387,7 +424,7 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     this.overlayCtx.stroke();
 
     this.overlayCtx.fillStyle = cornerFill;
-    for (const corner of corners) {
+    for (const corner of scaledCorners) {
       this.overlayCtx.beginPath();
       this.overlayCtx.arc(corner.x, corner.y, 8, 0, Math.PI * 2);
       this.overlayCtx.fill();
@@ -542,7 +579,7 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
 
   private updateStatusMessage(hasContour: boolean): void {
     if (!hasContour) {
-      this.statusMessage = 'Align the document within the frame';
+      this.statusMessage = 'Move the camera so the document fills the frame';
       return;
     }
 
@@ -558,12 +595,22 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    if (this.qualityScore >= 60) {
-      this.statusMessage = 'Almost there – steady the camera and reduce glare';
+    if (this.edgeStabilityScore < 60) {
+      this.statusMessage = 'Hold steady to reduce motion blur';
       return;
     }
 
-    this.statusMessage = 'Improve focus, lighting, or alignment';
+    if (this.sharpnessScore < 60) {
+      this.statusMessage = 'Move closer or adjust focus for a sharper image';
+      return;
+    }
+
+    if (this.exposureScore < 60) {
+      this.statusMessage = 'Adjust lighting to reduce glare and shadows';
+      return;
+    }
+
+    this.statusMessage = 'Align the document edges with the guide';
   }
 
   private orderCorners(contour: any): Point[] {
@@ -573,36 +620,19 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
       coords.push({ x: point[0], y: point[1] });
     }
 
-    const center = coords.reduce(
-      (acc, point) => ({ x: acc.x + point.x / coords.length, y: acc.y + point.y / coords.length }),
-      { x: 0, y: 0 }
-    );
-
-    const withAngles = coords
-      .map((point) => ({
-        ...point,
-        angle: Math.atan2(point.y - center.y, point.x - center.x)
-      }))
-      .sort((a, b) => a.angle - b.angle);
-
-    let startIndex = 0;
-    let smallestSum = Number.POSITIVE_INFINITY;
-    withAngles.forEach((point, index) => {
-      const sum = point.x + point.y;
-      if (sum < smallestSum) {
-        smallestSum = sum;
-        startIndex = index;
-      }
-    });
-
-    const ordered: Point[] = [];
-    for (let i = 0; i < withAngles.length; i++) {
-      const idx = (startIndex + i) % withAngles.length;
-      const { x, y } = withAngles[idx];
-      ordered.push({ x, y });
+    if (coords.length !== 4) {
+      return coords;
     }
 
-    return ordered;
+    const sumSorted = [...coords].sort((a, b) => a.x + a.y - (b.x + b.y));
+    const diffSorted = [...coords].sort((a, b) => a.x - a.y - (b.x - b.y));
+
+    const topLeft = sumSorted[0];
+    const bottomRight = sumSorted[sumSorted.length - 1];
+    const bottomLeft = diffSorted[0];
+    const topRight = diffSorted[diffSorted.length - 1];
+
+    return [topLeft, topRight, bottomRight, bottomLeft];
   }
 
   private triggerDownload(dataUrl: string): void {
@@ -621,6 +651,11 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     if (this.stream) {
       this.stream.getTracks().forEach((track) => track.stop());
       this.stream = null;
+    }
+
+    if (this.resizeListener) {
+      window.removeEventListener('resize', this.resizeListener);
+      this.resizeListener = null;
     }
 
     this.processingCanvas = null;

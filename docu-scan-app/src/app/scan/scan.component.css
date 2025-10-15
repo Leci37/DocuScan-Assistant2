@@ -20,6 +20,8 @@ video {
   height: 100%;
   object-fit: cover;
   filter: contrast(1.05) brightness(1.05);
+  backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
 .overlay {
@@ -30,6 +32,7 @@ video {
   height: 100%;
   pointer-events: none;
   transition: transform 0.35s ease;
+  backface-visibility: hidden;
 }
 
 .overlay.capture {
