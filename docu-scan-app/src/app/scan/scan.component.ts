@@ -264,6 +264,12 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     this.videoProcessingResources = null;
   }
 
+  /**
+   * Waits for the global cv object to be available.
+   * @param maxAttempts - The maximum number of times to check.
+   * @param delay - The delay in ms between checks.
+   * @returns A Promise that resolves when OpenCV is ready, or rejects on timeout.
+   */
   private waitForOpenCv(maxAttempts = 20, delay = 250): Promise<void> {
     return new Promise((resolve, reject) => {
       let attempts = 0;
@@ -277,7 +283,7 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
         }
 
         if (attempts >= maxAttempts) {
-          reject(new Error('OpenCV.js is not loaded.'));
+          reject(new Error('OpenCV.js did not load in time.'));
           return;
         }
 
