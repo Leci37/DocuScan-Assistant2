@@ -1,324 +1,324 @@
-import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild } from '@angular/core';
-import { NgIf } from '@angular/common';
+import { Component, ElementRef, ViewChild, OnDestroy, OnInit, PLATFORM_ID, Inject } from '@angular/core';
+import { isPlatformBrowser, CommonModule } from '@angular/common';
 
-declare const cv: any;
-
-type Corner = { x: number; y: number };
+declare var cv: any;
 
 @Component({
   selector: 'app-scan',
   standalone: true,
-  imports: [NgIf],
+  imports: [CommonModule],
   templateUrl: './scan.component.html',
   styleUrls: ['./scan.component.css']
 })
-export class ScanComponent implements OnInit, AfterViewInit, OnDestroy {
-  @ViewChild('video', { static: false }) private readonly videoRef!: ElementRef<HTMLVideoElement>;
-  @ViewChild('canvasOverlay', { static: false }) private readonly canvasRef!: ElementRef<HTMLCanvasElement>;
+export class ScanComponent implements OnInit, OnDestroy {
+  @ViewChild('video', { static: true }) videoElement!: ElementRef<HTMLVideoElement>;
+  @ViewChild('canvas', { static: true }) canvasElement!: ElementRef<HTMLCanvasElement>;
 
-  documentDetected = false;
-
-  private streaming = false;
   private stream: MediaStream | null = null;
-  private currentCorners: Corner[] | null = null;
-  private animationFrameId: number | null = null;
-  private openCvReadyPromise: Promise<void> | null = null;
-  private videoProcessingResources:
-    | {
-        cap: any;
-        src: any;
-        gray: any;
-        blurred: any;
-        edges: any;
-        contours: any;
-        hierarchy: any;
-        kernel: any;
-      }
-    | null = null;
+  private animationId: number | null = null;
+  private isProcessing = false;
+  private opencvLoaded = false;
 
-  async ngOnInit(): Promise<void> {
-    this.openCvReadyPromise = this.waitForOpenCv(30000);
+  // Public properties for template
+  documentDetected = false;
+  private detectionStableCount = 0;
+  private readonly STABLE_THRESHOLD = 5; // Number of consecutive frames needed
 
-    try {
-      await this.openCvReadyPromise;
-      console.log('OpenCV.js loaded successfully');
-    } catch (error) {
-      console.error('OpenCV.js failed to load:', error);
-    }
-  }
+  constructor(@Inject(PLATFORM_ID) private platformId: Object) {}
 
-  async ngAfterViewInit(): Promise<void> {
-    try {
-      await (this.openCvReadyPromise ?? this.waitForOpenCv(30000));
+  async ngOnInit() {
+    if (isPlatformBrowser(this.platformId)) {
+      await this.waitForOpenCV();
       await this.startCamera();
-    } catch (error) {
-      console.error('Unable to start camera:', error);
     }
   }
 
-  ngOnDestroy(): void {
-    this.streaming = false;
-    this.disposeVideoProcessingResources();
-
-    if (this.stream) {
-      this.stream.getTracks().forEach((track) => track.stop());
-      this.stream = null;
-    }
+  ngOnDestroy() {
+    this.cleanup();
   }
 
-  captureImage(): void {
-    if (!this.documentDetected || !this.currentCorners?.length) {
-      alert('No document detected. Please position the document clearly.');
-      return;
-    }
+  private async waitForOpenCV(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // Check if OpenCV is already loaded
+      if (typeof cv !== 'undefined' && cv.Mat) {
+        console.log('OpenCV.js already loaded');
+        this.opencvLoaded = true;
+        resolve();
+        return;
+      }
 
-    const video = this.videoRef.nativeElement;
-    const captureCanvas = document.createElement('canvas');
-    captureCanvas.width = video.videoWidth;
-    captureCanvas.height = video.videoHeight;
-    const ctx = captureCanvas.getContext('2d');
+      // Set up timeout (30 seconds)
+      const timeout = setTimeout(() => {
+        reject(new Error('OpenCV.js did not load in time. Check your internet connection and OpenCV.js URL.'));
+      }, 30000);
 
-    if (!ctx) {
-      console.error('Unable to capture document: no 2D context available.');
-      return;
-    }
-
-    ctx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
-
-    const dataUrl = captureCanvas.toDataURL('image/png');
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = `document-scan-${Date.now()}.png`;
-    link.click();
-
-    console.log('Document captured with corners:', this.currentCorners);
+      // Wait for OpenCV to load
+      const checkInterval = setInterval(() => {
+        if (typeof cv !== 'undefined' && cv.Mat) {
+          clearInterval(checkInterval);
+          clearTimeout(timeout);
+          console.log('OpenCV.js loaded successfully');
+          this.opencvLoaded = true;
+          resolve();
+        }
+      }, 100);
+    });
   }
 
-  private async startCamera(): Promise<void> {
-    const video = this.videoRef.nativeElement;
-
+  private async startCamera() {
     try {
+      if (!this.opencvLoaded) {
+        throw new Error('OpenCV.js is not loaded');
+      }
+
+      // Request camera with specific constraints
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: 'environment',
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
+          facingMode: 'environment', // Use back camera on mobile
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         }
       });
 
+      const video = this.videoElement.nativeElement;
       video.srcObject = this.stream;
 
-      video.onloadedmetadata = async () => {
-        try {
-          await video.play();
-          this.streaming = true;
+      // Wait for video metadata to load
+      await new Promise<void>((resolve) => {
+        video.onloadedmetadata = () => {
+          video.play();
+          console.log(`Video dimensions: ${video.videoWidth}x${video.videoHeight}`);
+          resolve();
+        };
+      });
 
-          const canvas = this.canvasRef.nativeElement;
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          canvas.style.width = `${video.videoWidth}px`;
-          canvas.style.height = `${video.videoHeight}px`;
+      // Additional small delay to ensure video is fully ready
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-          this.initializeProcessing();
-        } catch (error) {
-          console.error('Video playback failed:', error);
-        }
-      };
+      // Initialize processing after video is ready
+      this.initializeProcessing();
     } catch (error) {
-      console.error('Camera access error:', error);
-      alert('Unable to access camera. Please grant camera permissions.');
+      console.error('Unable to start camera:', error);
+      alert('Camera access denied or not available. Please check your permissions.');
     }
   }
 
-  private initializeProcessing(): void {
-    const video = this.videoRef.nativeElement;
-    const canvas = this.canvasRef.nativeElement;
-    const ctx = canvas.getContext('2d');
+  private initializeProcessing() {
+    const video = this.videoElement.nativeElement;
+    const canvas = this.canvasElement.nativeElement;
 
-    if (!ctx) {
-      console.error('Canvas 2D context could not be initialized.');
-      return;
-    }
-
-    this.disposeVideoProcessingResources();
-
+    // Set canvas dimensions to match video
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.style.width = `${video.videoWidth}px`;
-    canvas.style.height = `${video.videoHeight}px`;
 
-    const cap = new cv.VideoCapture(video);
-    const src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-    const gray = new cv.Mat();
-    const blurred = new cv.Mat();
-    const edges = new cv.Mat();
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
-    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+    console.log(`Canvas set to: ${canvas.width}x${canvas.height}`);
 
-    this.videoProcessingResources = { cap, src, gray, blurred, edges, contours, hierarchy, kernel };
-
+    // Start processing frames
     const processFrame = () => {
-      if (!this.streaming) {
-        this.disposeVideoProcessingResources();
+      if (this.isProcessing) {
+        this.animationId = requestAnimationFrame(processFrame);
         return;
       }
 
       try {
-        this.detectDocument(ctx, canvas);
+        this.isProcessing = true;
+        this.detectDocument();
       } catch (error) {
         console.error('Processing error:', error);
+      } finally {
+        this.isProcessing = false;
+        this.animationId = requestAnimationFrame(processFrame);
       }
-
-      this.animationFrameId = requestAnimationFrame(processFrame);
     };
 
-    this.animationFrameId = requestAnimationFrame(processFrame);
+    processFrame();
   }
 
-  private detectDocument(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
-    const resources = this.videoProcessingResources;
-    const video = this.videoRef.nativeElement;
+  private detectDocument() {
+    const video = this.videoElement.nativeElement;
+    const canvas = this.canvasElement.nativeElement;
+    const ctx = canvas.getContext('2d');
 
-    if (!resources) {
+    if (!ctx || !this.opencvLoaded) return;
+
+    // Verify video is playing and has valid dimensions
+    if (video.readyState !== video.HAVE_ENOUGH_DATA || 
+        video.videoWidth === 0 || 
+        video.videoHeight === 0) {
       return;
     }
 
-    if (resources.src.rows !== video.videoHeight || resources.src.cols !== video.videoWidth) {
-      console.warn('Video dimensions changed. Re-initializing processing resources.');
-      this.initializeProcessing();
-      return;
-    }
+    let src: any = null;
+    let gray: any = null;
+    let blurred: any = null;
+    let edges: any = null;
+    let hierarchy: any = null;
+    let contours: any = null;
 
-    const { cap, src, gray, blurred, edges, contours, hierarchy, kernel } = resources;
+    try {
+      // Create Mat from video frame - CRITICAL: use exact video dimensions
+      src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+      
+      // Create a temporary canvas to capture video frame
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = video.videoWidth;
+      tempCanvas.height = video.videoHeight;
+      const tempCtx = tempCanvas.getContext('2d');
+      
+      if (!tempCtx) return;
+      
+      // Draw video frame to temporary canvas
+      tempCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+      
+      // Get image data and convert to Mat
+      const imageData = tempCtx.getImageData(0, 0, video.videoWidth, video.videoHeight);
+      src.data.set(imageData.data);
 
-    cap.read(src);
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-    cv.Canny(blurred, edges, 50, 150);
-    cv.dilate(edges, edges, kernel);
-    cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      // Convert to grayscale
+      gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Apply Gaussian blur to reduce noise
+      blurred = new cv.Mat();
+      cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
 
-    let largestContourIndex = -1;
-    let maxArea = 0;
-    const minArea = canvas.width * canvas.height * 0.1;
+      // Edge detection using Canny
+      edges = new cv.Mat();
+      cv.Canny(blurred, edges, 50, 150);
 
-    for (let i = 0; i < contours.size(); i++) {
-      const contour = contours.get(i);
-      const area = cv.contourArea(contour);
+      // Find contours
+      contours = new cv.MatVector();
+      hierarchy = new cv.Mat();
+      cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-      if (area > maxArea && area > minArea) {
-        maxArea = area;
-        largestContourIndex = i;
+      // Clear canvas and draw video frame
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Find the largest rectangular contour
+      let maxArea = 0;
+      let bestContour: any = null;
+
+      for (let i = 0; i < contours.size(); i++) {
+        const contour = contours.get(i);
+        const area = cv.contourArea(contour);
+        const peri = cv.arcLength(contour, true);
+        const approx = new cv.Mat();
+
+        cv.approxPolyDP(contour, approx, 0.02 * peri, true);
+
+        // Look for quadrilaterals with significant area
+        if (approx.rows === 4 && area > maxArea && area > 10000) {
+          maxArea = area;
+          if (bestContour) bestContour.delete();
+          bestContour = approx;
+        } else {
+          approx.delete();
+        }
       }
-    }
 
-    this.documentDetected = false;
-    this.currentCorners = null;
+      // Update document detection status
+      if (bestContour) {
+        this.detectionStableCount++;
+        
+        // Document is considered detected when stable for multiple frames
+        if (this.detectionStableCount >= this.STABLE_THRESHOLD) {
+          this.documentDetected = true;
+        }
 
-    if (largestContourIndex >= 0) {
-      const largestContour = contours.get(largestContourIndex);
-      const peri = cv.arcLength(largestContour, true);
-      const approx = new cv.Mat();
-      cv.approxPolyDP(largestContour, approx, 0.02 * peri, true);
-
-      if (approx.rows === 4) {
-        this.documentDetected = true;
-        this.currentCorners = [];
-
-        ctx.strokeStyle = 'rgba(0, 123, 255, 0.9)';
-        ctx.fillStyle = 'rgba(0, 123, 255, 0.2)';
+        // Draw the detected document outline
+        ctx.strokeStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
         ctx.lineWidth = 4;
+        ctx.fillStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 255, 0, 0.2)';
+
         ctx.beginPath();
+        const firstPoint = bestContour.data32S;
+        ctx.moveTo(firstPoint[0], firstPoint[1]);
 
-        for (let j = 0; j < approx.rows; j++) {
-          const x = approx.data32S[j * 2];
-          const y = approx.data32S[j * 2 + 1];
-          this.currentCorners.push({ x, y });
-
-          if (j === 0) {
-            ctx.moveTo(x, y);
-          } else {
-            ctx.lineTo(x, y);
-          }
+        for (let i = 1; i < 4; i++) {
+          ctx.lineTo(firstPoint[i * 2], firstPoint[i * 2 + 1]);
         }
 
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
 
-        ctx.fillStyle = 'rgba(0, 123, 255, 0.9)';
-        for (const corner of this.currentCorners) {
+        // Draw corner circles
+        ctx.fillStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
+        for (let i = 0; i < 4; i++) {
           ctx.beginPath();
-          ctx.arc(corner.x, corner.y, 8, 0, 2 * Math.PI);
+          ctx.arc(firstPoint[i * 2], firstPoint[i * 2 + 1], 8, 0, 2 * Math.PI);
           ctx.fill();
         }
+
+        bestContour.delete();
+      } else {
+        // No document detected, reset counters
+        this.detectionStableCount = 0;
+        this.documentDetected = false;
       }
 
-      approx.delete();
-      largestContour.delete();
-    }
-
-    for (let i = 0; i < contours.size(); i++) {
-      contours.get(i).delete();
+    } catch (error) {
+      console.error('Error in detectDocument:', error);
+      this.documentDetected = false;
+    } finally {
+      // Clean up all OpenCV objects
+      if (src) src.delete();
+      if (gray) gray.delete();
+      if (blurred) blurred.delete();
+      if (edges) edges.delete();
+      if (hierarchy) hierarchy.delete();
+      if (contours) contours.delete();
     }
   }
 
-  private disposeVideoProcessingResources(): void {
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
+  private cleanup() {
+    // Stop animation frame
+    if (this.animationId !== null) {
+      cancelAnimationFrame(this.animationId);
+      this.animationId = null;
     }
 
-    if (!this.videoProcessingResources) {
+    // Stop video stream
+    if (this.stream) {
+      this.stream.getTracks().forEach(track => track.stop());
+      this.stream = null;
+    }
+  }
+
+  // Public method for template
+  captureImage() {
+    if (!this.documentDetected) {
+      console.warn('No document detected');
       return;
     }
 
-    const { cap, src, gray, blurred, edges, contours, hierarchy, kernel } = this.videoProcessingResources;
+    const canvas = this.canvasElement.nativeElement;
+    const dataUrl = canvas.toDataURL('image/png');
+    
+    console.log('Document captured');
+    
+    // Trigger download
+    const link = document.createElement('a');
+    link.download = `scan-${Date.now()}.png`;
+    link.href = dataUrl;
+    link.click();
 
-    src.delete();
-    gray.delete();
-    blurred.delete();
-    edges.delete();
-    contours.delete();
-    hierarchy.delete();
-    kernel.delete();
-
-    if (cap && typeof cap.delete === 'function') {
-      cap.delete();
-    }
-
-    this.videoProcessingResources = null;
+    // Provide user feedback
+    this.showCaptureFlash();
   }
 
-  /**
-   * Waits for the global cv object to be available.
-   * @param maxAttempts - The maximum number of times to check.
-   * @param delay - The delay in ms between checks.
-   * @returns A Promise that resolves when OpenCV is ready, or rejects on timeout.
-   */
-  private waitForOpenCv(timeout = 30000): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (typeof cv !== 'undefined' && typeof cv.Mat !== 'undefined') {
-        resolve();
-        return;
-      }
+  private showCaptureFlash() {
+    const canvas = this.canvasElement.nativeElement;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-      const checkInterval = 100;
-      const timeoutId = setTimeout(() => {
-        clearInterval(intervalId);
-        reject(new Error('OpenCV.js did not load in time. Check your internet connection and OpenCV.js URL.'));
-      }, timeout);
+    // White flash effect
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      const intervalId = setInterval(() => {
-        if (typeof cv !== 'undefined' && typeof cv.Mat !== 'undefined') {
-          clearTimeout(timeoutId);
-          clearInterval(intervalId);
-          resolve();
-        }
-      }, checkInterval);
-    });
+    setTimeout(() => {
+      // Flash will be cleared on next frame draw
+    }, 100);
   }
 }
