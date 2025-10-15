@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { NgIf } from '@angular/common';
 
 declare const cv: any;
@@ -12,7 +12,7 @@ type Corner = { x: number; y: number };
   templateUrl: './scan.component.html',
   styleUrls: ['./scan.component.css']
 })
-export class ScanComponent implements AfterViewInit, OnDestroy {
+export class ScanComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('video', { static: false }) private readonly videoRef!: ElementRef<HTMLVideoElement>;
   @ViewChild('canvasOverlay', { static: false }) private readonly canvasRef!: ElementRef<HTMLCanvasElement>;
 
@@ -22,6 +22,7 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
   private stream: MediaStream | null = null;
   private currentCorners: Corner[] | null = null;
   private animationFrameId: number | null = null;
+  private openCvReadyPromise: Promise<void> | null = null;
   private videoProcessingResources:
     | {
         cap: any;
@@ -35,12 +36,23 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
       }
     | null = null;
 
-  async ngAfterViewInit(): Promise<void> {
+  async ngOnInit(): Promise<void> {
+    this.openCvReadyPromise = this.waitForOpenCv(30000);
+
     try {
-      await this.waitForOpenCv();
-      await this.startCamera();
+      await this.openCvReadyPromise;
+      console.log('OpenCV.js loaded successfully');
     } catch (error) {
       console.error('OpenCV.js failed to load:', error);
+    }
+  }
+
+  async ngAfterViewInit(): Promise<void> {
+    try {
+      await (this.openCvReadyPromise ?? this.waitForOpenCv(30000));
+      await this.startCamera();
+    } catch (error) {
+      console.error('Unable to start camera:', error);
     }
   }
 
@@ -89,20 +101,24 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
         }
       });
 
       video.srcObject = this.stream;
 
-      // --- FIX STARTS HERE ---
-      // Use 'oncanplay' which is more reliable for getting stable video dimensions.
-      video.oncanplay = async () => {
-        // --- FIX ENDS HERE ---
+      video.onloadedmetadata = async () => {
         try {
           await video.play();
           this.streaming = true;
+
+          const canvas = this.canvasRef.nativeElement;
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          canvas.style.width = `${video.videoWidth}px`;
+          canvas.style.height = `${video.videoHeight}px`;
+
           this.initializeProcessing();
         } catch (error) {
           console.error('Video playback failed:', error);
@@ -283,27 +299,26 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
    * @param delay - The delay in ms between checks.
    * @returns A Promise that resolves when OpenCV is ready, or rejects on timeout.
    */
-  private waitForOpenCv(maxAttempts = 20, delay = 250): Promise<void> {
+  private waitForOpenCv(timeout = 30000): Promise<void> {
     return new Promise((resolve, reject) => {
-      let attempts = 0;
+      if (typeof cv !== 'undefined' && typeof cv.Mat !== 'undefined') {
+        resolve();
+        return;
+      }
 
-      const check = () => {
-        attempts += 1;
+      const checkInterval = 100;
+      const timeoutId = setTimeout(() => {
+        clearInterval(intervalId);
+        reject(new Error('OpenCV.js did not load in time. Check your internet connection and OpenCV.js URL.'));
+      }, timeout);
 
+      const intervalId = setInterval(() => {
         if (typeof cv !== 'undefined' && typeof cv.Mat !== 'undefined') {
+          clearTimeout(timeoutId);
+          clearInterval(intervalId);
           resolve();
-          return;
         }
-
-        if (attempts >= maxAttempts) {
-          reject(new Error('OpenCV.js did not load in time.'));
-          return;
-        }
-
-        setTimeout(check, delay);
-      };
-
-      check();
+      }, checkInterval);
     });
   }
 }
