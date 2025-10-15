@@ -2,12 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>DocuScanApp</title>
+  <title>Document Scanner</title>
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
 </head>
 <body>
   <app-root></app-root>
+  
+  <!-- Load OpenCV.js before Angular app initializes -->
+  <script async src="https://docs.opencv.org/4.8.0/opencv.js" 
+          onload="console.log('OpenCV.js loaded from CDN')" 
+          onerror="console.error('Failed to load OpenCV.js from CDN')">
+  </script>
 </body>
 </html>
