@@ -1,102 +1,152 @@
-# DocuScan Angular 📸: Live Document Scanner
+# Angular Document Scanner 📸
 
-This project is an Angular component that implements a live document scanner, similar to the functionality found in apps like Google Drive or Microsoft Lens. It uses **OpenCV.js** to perform real-time edge detection on a live camera stream and overlays a polygon to guide the user.
+An enterprise-ready Angular component that turns any modern browser into a smart document scanner. It combines the device camera with OpenCV.js to deliver real-time document detection, adaptive quality scoring, and intelligent auto-capture animations reminiscent of native scanning apps.
 
-The component also includes an advanced **auto-capture feature** that triggers the scan automatically when the camera is steady, the image is sharp, and the lighting is adequate.
+---
 
------
+## ✨ Highlights
 
-## Features
+- **Real-time edge detection** with adaptive Canny thresholds and contour validation.
+- **Quality scoring engine** that evaluates stability, sharpness, and lighting on every frame.
+- **Intelligent auto-capture** once optimal conditions are maintained for a configurable duration.
+- **Immersive visual feedback** using a synchronized canvas overlay, countdown indicator, and capture animation.
+- **Perspective-corrected exports** that deliver a flattened, ready-to-use document image.
 
-  * **Live Camera Preview**: Displays a real-time feed from the user's camera.
-  * **Real-Time Edge Detection**: Processes video frames to find the corners of a document.
-  * **Highlight Overlay**: Draws a colored polygon over the `<canvas>` element to visualize the detected edges.
-  * **Auto-Capture Logic**: Automatically captures the image when the following conditions are met:
-      * **Edge Stability**: The detected corners remain stable for several frames.
-      * **Image Sharpness**: The image is in focus, calculated using a Variance of Laplacian algorithm.
-      * **Good Lighting**: The image histogram indicates proper exposure (not too dark or bright).
+---
 
------
+## 🚀 Getting Started
 
-## Getting Started
+### 1. Install dependencies
 
-Follow these instructions to get a copy of the project up and running on your local machine for development and testing purposes.
+```bash
+cd docu-scan-app
+npm install
+```
 
-### Prerequisites
+### 2. Include OpenCV.js
 
-  * Node.js and npm
-  * Angular CLI (`npm install -g @angular/cli`)
+Add the OpenCV.js script tag to `src/index.html` so it loads before the Angular bundle:
 
+```html
+<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+```
 
+For offline deployments host the file yourself and adjust the URL accordingly.
 
+### 3. Run the development server
 
-## Development Instructions
+```bash
+npm start
+```
 
-Here is a summary of the steps we have completed so far to get the live document scanner running.
+Visit `http://localhost:4200` and grant camera permissions when prompted.
 
-### 1\. Project Setup
+> **Tip:** On mobile devices open the same URL over HTTPS or via a tunnelling solution (e.g. `ngrok`) because many browsers only expose the camera over secure origins.
 
-  * **Install Angular CLI:** If you haven't already, install the Angular Command Line Interface globally.
-    ```bash
-    npm install -g @angular/cli
-    ```
-  * **Create Angular Project:** Navigate to your GitHub directory and create the new project.
-    ```bash
-    cd C:\Users\llecinana\Documents\GitHub\DocuScan-Assistant2
-    ng new docu-scan-app
-    ```
-  * **Navigate into Project:** Move into the newly created project directory before running any other commands.
-    ```bash
-    cd docu-scan-app
-    ```
+---
 
-### 2\. Add OpenCV.js
+## 🧩 Component Integration
 
-  * Include the OpenCV.js library in your project by adding the script tag to the `<head>` of your `src/index.html` file.
-    ```html
-    <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
-    ```
+The scanner is delivered as a standalone Angular component located at `src/app/scanner`.
 
-### 3\. Create the Scanner Component
+```html
+<!-- app.component.html -->
+<app-scanner
+  [config]="scannerConfig"
+  (documentCaptured)="handleCapture($event)"
+></app-scanner>
+```
 
-  * Generate a new component named `scan` using the Angular CLI. This will house all the logic for our scanner.
-    ```bash
-    ng generate component scan
-    ```
+```ts
+// app.component.ts
+import { Component } from '@angular/core';
+import { DEFAULT_SCANNER_CONFIG, ScannerConfig } from './scanner/scanner.config';
+import { ScanResult } from './scanner/models/scan-result.model';
 
-### 4\. Implement the Component
+@Component({
+  selector: 'app-root',
+  standalone: true,
+  templateUrl: './app.html',
+})
+export class AppComponent {
+  scannerConfig: ScannerConfig = { ...DEFAULT_SCANNER_CONFIG };
 
-  * **HTML (`src/app/scan/scan.component.html`):** Set up the video and canvas elements.
-    ```html
-    <div class="scanner-container">
-      <video #video autoplay playsinline></video>
-      <canvas #canvasOverlay></canvas>
-    </div>
-    ```
-  * **CSS (`src/app/scan/scan.component.css`):** Style the component to overlay the canvas on top of the video feed.
-    ```css
-    .scanner-container {
-      position: relative;
-    } 
-    canvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-    }
-    ```
-  * **TypeScript (`src/app/scan/scan.component.ts`):** Add the core logic to access the camera, process the video frames with OpenCV.js, and draw the detected document edges on the canvas. *(Refer to the complete code we created in the previous step)*.
+  handleCapture(result: ScanResult) {
+    console.log('Document captured!', result);
+  }
+}
+```
 
-### 5\. Display the Component
+The component emits a `ScanResult` object that contains the flattened PNG data URL, capture timestamp, detected corners, and the quality breakdown at the moment of capture.
 
-  * Clear the contents of `src/app/app.component.html` and add the selector for your new scan component.
-    ```html
-    <app-scan></app-scan>
-    ```
+---
 
-### 6\. Run the Application
+## ⚙️ Configuration
 
-  * Start the local development server from within the `docu-scan-app` directory.
-    ```bash
-    ng serve
-    ```
-  * Open your browser and navigate to `http://localhost:4200` to see the live document scanner in action.
+Tweak behaviour via the `ScannerConfig` interface (`src/app/scanner/scanner.config.ts`).
+
+| Option | Description | Default |
+| ------ | ----------- | ------- |
+| `autoCapture` | Enables the auto-capture workflow when quality is high. | `true` |
+| `captureThreshold` | Minimum overall score (0-100) required to start the countdown. | `85` |
+| `captureDelay` | Duration (ms) the score must stay above the threshold before capturing. | `3000` |
+| `showScore` | Toggle the score heads-up display. | `true` |
+| `showSubScores` | Show per-metric breakdown under the score. | `true` |
+| `minDocumentArea` | Reject contours smaller than this fraction of the frame. | `0.2` |
+| `maxDocumentArea` | Reject contours larger than this fraction of the frame. | `0.95` |
+| `enableSound` | Play a synthetic shutter sound during capture. | `false` |
+| `captureAnimation` | Placeholder for switching animation styles (`flash`, `ripple`, `shutter`, `collapse`). | `'flash'` |
+| `frameProcessingRate` | Process every _n_-th frame (1 = every frame). Increase to lighten CPU load. | `1` |
+
+---
+
+## 🧠 How It Works
+
+1. **Frame acquisition** – camera frames are downscaled (max 640px width) for processing while the full-resolution feed remains onscreen.
+2. **Edge detection** – frames pass through grayscale → Gaussian blur → adaptive Canny → contour detection. Candidate contours are filtered by area, convexity, and polygonal approximation.
+3. **Quality scoring** – every frame receives stability (40%), sharpness (35%), and lighting (25%) scores that are combined into the real-time quality index.
+4. **Auto-capture** – when the score stays above the threshold, a countdown circle animates. On completion the component flashes, plays an optional shutter tone, and emits the perspective-corrected document.
+5. **Capture animation** – the overlay polygon pulses green, turns blue during capture, flashes white, collapses to the centre, and shows a confirmation badge.
+
+---
+
+## 🛠 Performance Tips
+
+- **Adjust `frameProcessingRate`** to skip frames on low-powered devices (e.g. set to `2` to process every other frame).
+- **Limit camera resolution** via `getUserMedia` constraints if you notice thermal throttling on mobile.
+- **Leverage Web Workers** for OpenCV if you need to free up the main thread—`ScannerService` encapsulates the processing pipeline for easy extraction.
+- **Reuse Mats** when extending functionality; always call `.delete()` on OpenCV matrices you create to avoid memory leaks.
+
+---
+
+## 🌐 Browser Compatibility
+
+| Browser | Desktop | Mobile |
+| ------- | ------- | ------ |
+| Chrome  | ✅ | ✅ |
+| Edge (Chromium) | ✅ | ✅ |
+| Firefox | ✅ (camera requires HTTPS) | ⚠️ (auto-focus support varies) |
+| Safari  | ✅ (macOS 14+) | ✅ (iOS 15+) |
+
+> **Note:** Camera APIs are generally blocked on insecure origins. Always deploy behind HTTPS in production.
+
+---
+
+## 🧪 Testing Checklist
+
+- Camera permission granted and live preview visible.
+- Polygon tracks a sheet of paper in real time.
+- Score rises/falls with movement, lighting, and focus changes.
+- Countdown triggers when the score remains above the threshold.
+- Captured image is cropped and perspective-corrected.
+
+---
+
+## 📚 Further Ideas
+
+- Export multiple pages and assemble a PDF.
+- Add document classification (receipts vs. photos) before saving.
+- Move processing into a Web Worker for even smoother UI.
+- Persist captured documents to IndexedDB for offline use.
+
+Happy scanning! 🧾✨
