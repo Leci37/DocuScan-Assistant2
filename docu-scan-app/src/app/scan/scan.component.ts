@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, OnDestroy, OnInit, PLATFORM_ID, Inject } from '@angular/core';
+import { Component, ElementRef, ViewChild, OnDestroy, AfterViewInit, PLATFORM_ID, Inject } from '@angular/core';
 import { isPlatformBrowser, CommonModule } from '@angular/common';
 
 declare var cv: any;
@@ -10,9 +10,9 @@ declare var cv: any;
   templateUrl: './scan.component.html',
   styleUrls: ['./scan.component.css']
 })
-export class ScanComponent implements OnInit, OnDestroy {
-  @ViewChild('video', { static: true }) videoElement!: ElementRef<HTMLVideoElement>;
-  @ViewChild('canvas', { static: true }) canvasElement!: ElementRef<HTMLCanvasElement>;
+export class ScanComponent implements AfterViewInit, OnDestroy {
+  @ViewChild('video') videoElement!: ElementRef<HTMLVideoElement>;
+  @ViewChild('canvas') canvasElement!: ElementRef<HTMLCanvasElement>;
 
   private stream: MediaStream | null = null;
   private animationId: number | null = null;
@@ -26,7 +26,7 @@ export class ScanComponent implements OnInit, OnDestroy {
 
   constructor(@Inject(PLATFORM_ID) private platformId: Object) {}
 
-  async ngOnInit() {
+  async ngAfterViewInit() {
     if (isPlatformBrowser(this.platformId)) {
       await this.waitForOpenCV();
       await this.startCamera();
