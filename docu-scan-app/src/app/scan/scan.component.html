@@ -1,29 +1,16 @@
 <div class="scanner-container">
   <video #video autoplay playsinline></video>
   <canvas #canvas></canvas>
-
-  <div class="shutter" *ngIf="isCapturing"></div>
-
-  <div class="overlay-info" *ngIf="documentDetected">
-    <div class="detection-score">
-      Detection Score: {{ detectionScore }}%
-    </div>
-    <div class="status" [ngClass]="{ countdown: isCountdownActive, capturing: isCapturing }">
-      <ng-container *ngIf="isCapturing; else holdSteady">
-        Capturing...
-      </ng-container>
-      <ng-template #holdSteady>
-        <span *ngIf="isCountdownActive">
-          Hold steady... Auto capture in {{ autoCaptureCountdown | number: '1.0-1' }}s
-        </span>
-        <span *ngIf="!isCountdownActive">Hold steady...</span>
-      </ng-template>
-    </div>
-  </div>
-
+  
   <div class="controls">
-    <button class="manual-capture" (click)="manualCapture()" [disabled]="!documentDetected || isCapturing">
-      Manual Capture
+    <button (click)="captureImage()" [disabled]="!isSteady">
+      Capture Document
     </button>
+    <div class="status" *ngIf="documentDetected && !isSteady">
+      Hold steady...
+    </div>
+    <div class="status" *ngIf="isSteady">
+      ✓ Ready to capture
+    </div>
   </div>
 </div>
