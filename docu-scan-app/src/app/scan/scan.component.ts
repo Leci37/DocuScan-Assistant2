@@ -134,14 +134,15 @@ export class ScanComponent implements OnInit, OnDestroy {
     processFrame();
   }
 
-  private detectDocument() {
+// In src/app/scan/scan.component.ts
+
+private detectDocument() {
     const video = this.videoElement.nativeElement;
     const canvas = this.canvasElement.nativeElement;
     const ctx = canvas.getContext('2d');
 
     if (!ctx || !this.opencvLoaded) return;
 
-    // Verify video is playing and has valid dimensions
     if (video.readyState !== video.HAVE_ENOUGH_DATA || 
         video.videoWidth === 0 || 
         video.videoHeight === 0) {
@@ -156,10 +157,8 @@ export class ScanComponent implements OnInit, OnDestroy {
     let contours: any = null;
 
     try {
-      // Create Mat from video frame - CRITICAL: use exact video dimensions
       src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
       
-      // Create a temporary canvas to capture video frame
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = video.videoWidth;
       tempCanvas.height = video.videoHeight;
@@ -167,35 +166,40 @@ export class ScanComponent implements OnInit, OnDestroy {
       
       if (!tempCtx) return;
       
-      // Draw video frame to temporary canvas
       tempCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
       
-      // Get image data and convert to Mat
       const imageData = tempCtx.getImageData(0, 0, video.videoWidth, video.videoHeight);
       src.data.set(imageData.data);
 
-      // Convert to grayscale
       gray = new cv.Mat();
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-      // Apply Gaussian blur to reduce noise
       blurred = new cv.Mat();
       cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-
-      // Edge detection using Canny
+      
+      // --- NEW: Dynamic Threshold Calculation ---
+      // This makes the edge detection adaptive to lighting conditions.
+      const medianMat = new cv.Mat();
+      // Using a larger kernel size for median blur helps find a more representative median value for the whole image.
+      cv.medianBlur(gray, medianMat, 15); 
+      const medianValue = medianMat.data[Math.floor(medianMat.rows * medianMat.cols / 2)];
+      medianMat.delete();
+      
+      const sigma = 0.33;
+      const lowerThreshold = Math.max(0, (1.0 - sigma) * medianValue);
+      const upperThreshold = Math.min(255, (1.0 + sigma) * medianValue);
+      
       edges = new cv.Mat();
-      cv.Canny(blurred, edges, 50, 150);
+      cv.Canny(blurred, edges, lowerThreshold, upperThreshold);
+      // --- END NEW ---
 
-      // Find contours
       contours = new cv.MatVector();
       hierarchy = new cv.Mat();
       cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-      // Clear canvas and draw video frame
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Find the largest rectangular contour
       let maxArea = 0;
       let bestContour: any = null;
 
@@ -207,7 +211,6 @@ export class ScanComponent implements OnInit, OnDestroy {
 
         cv.approxPolyDP(contour, approx, 0.02 * peri, true);
 
-        // Look for quadrilaterals with significant area
         if (approx.rows === 4 && area > maxArea && area > 10000) {
           maxArea = area;
           if (bestContour) bestContour.delete();
@@ -216,17 +219,14 @@ export class ScanComponent implements OnInit, OnDestroy {
           approx.delete();
         }
       }
-
-      // Update document detection status
+      
       if (bestContour) {
         this.detectionStableCount++;
         
-        // Document is considered detected when stable for multiple frames
         if (this.detectionStableCount >= this.STABLE_THRESHOLD) {
           this.documentDetected = true;
         }
 
-        // Draw the detected document outline
         ctx.strokeStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
         ctx.lineWidth = 4;
         ctx.fillStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 255, 0, 0.2)';
@@ -242,8 +242,7 @@ export class ScanComponent implements OnInit, OnDestroy {
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
-
-        // Draw corner circles
+        
         ctx.fillStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
         for (let i = 0; i < 4; i++) {
           ctx.beginPath();
@@ -253,7 +252,6 @@ export class ScanComponent implements OnInit, OnDestroy {
 
         bestContour.delete();
       } else {
-        // No document detected, reset counters
         this.detectionStableCount = 0;
         this.documentDetected = false;
       }
@@ -262,7 +260,6 @@ export class ScanComponent implements OnInit, OnDestroy {
       console.error('Error in detectDocument:', error);
       this.documentDetected = false;
     } finally {
-      // Clean up all OpenCV objects
       if (src) src.delete();
       if (gray) gray.delete();
       if (blurred) blurred.delete();
@@ -271,7 +268,7 @@ export class ScanComponent implements OnInit, OnDestroy {
       if (contours) contours.delete();
     }
   }
-
+  
   private cleanup() {
     // Stop animation frame
     if (this.animationId !== null) {
