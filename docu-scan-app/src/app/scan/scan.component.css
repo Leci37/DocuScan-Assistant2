@@ -24,17 +24,6 @@ canvas {
   pointer-events: none;
 }
 
-.quality-scorer {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  background: rgba(0, 0, 0, 0.5);
-  color: white;
-  padding: 8px 12px;
-  border-radius: 10px;
-  font-family: monospace;
-}
-
 .controls {
   position: absolute;
   bottom: 30px;
