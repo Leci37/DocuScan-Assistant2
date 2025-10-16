@@ -2,8 +2,12 @@
   <video #video autoplay playsinline></video>
   <canvas #canvas></canvas>
 
+  <div class="quality-scorer">
+    SCORING {{ imageQuality }}%
+  </div>
+
   <div class="controls">
-    <button (click)="captureImage()" [disabled]="documentDetected">
+    <button (click)="captureImage()">
       Capture Document
     </button>
     <div class="status" *ngIf="autoCaptureFeedback">

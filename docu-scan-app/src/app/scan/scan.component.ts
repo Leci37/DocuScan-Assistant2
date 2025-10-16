@@ -1,4 +1,13 @@
-import { Component, ElementRef, ViewChild, OnDestroy, AfterViewInit, PLATFORM_ID, Inject } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  ViewChild,
+  OnDestroy,
+  AfterViewInit,
+  PLATFORM_ID,
+  Inject,
+  Input
+} from '@angular/core';
 import { isPlatformBrowser, CommonModule } from '@angular/common';
 
 declare var cv: any;
@@ -19,14 +28,21 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
   private isProcessing = false;
   private opencvLoaded = false;
 
+  // Configuration
+  @Input() autoCaptureEnabled = false;
+
   // Public properties for template
   documentDetected = false;
   autoCaptureFeedback = '';
+  imageQuality = 0;
   private detectionStableCount = 0;
   private readonly STABLE_THRESHOLD = 10; // Frames needed for stability
   private readonly SHARPNESS_THRESHOLD = 50; // Adjust as needed
   private readonly LIGHTING_THRESHOLD_LOW = 50;
   private readonly LIGHTING_THRESHOLD_HIGH = 200;
+  private lastSharp = false;
+  private lastWellLit = false;
+  private autoCaptureTriggered = false;
 
   constructor(@Inject(PLATFORM_ID) private platformId: Object) {}
 
@@ -145,9 +161,11 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
 
     if (!ctx || !this.opencvLoaded) return;
 
-    if (video.readyState !== video.HAVE_ENOUGH_DATA || 
-        video.videoWidth === 0 || 
-        video.videoHeight === 0) {
+    if (
+      video.readyState !== video.HAVE_ENOUGH_DATA ||
+      video.videoWidth === 0 ||
+      video.videoHeight === 0
+    ) {
       return;
     }
 
@@ -199,6 +217,8 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
       hierarchy = new cv.Mat();
       cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
+      this.calculateImageQuality(gray);
+
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
@@ -227,12 +247,16 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
 
         if (this.detectionStableCount >= this.STABLE_THRESHOLD) {
           this.documentDetected = true;
-          this.attemptAutoCapture(gray);
+          if (this.autoCaptureEnabled) {
+            this.attemptAutoCapture();
+          } else {
+            this.autoCaptureFeedback = '';
+          }
         }
 
-        ctx.strokeStyle = this.documentDetected ? 'rgba(0, 0, 255, 0.8)' : 'rgba(255, 255, 0, 0.8)';
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.8)';
         ctx.lineWidth = 4;
-        ctx.fillStyle = this.documentDetected ? 'rgba(0, 0, 255, 0.2)' : 'rgba(255, 255, 0, 0.2)';
+        ctx.fillStyle = 'rgba(255, 255, 0, 0.2)';
 
         ctx.beginPath();
         const firstPoint = bestContour.data32S;
@@ -246,7 +270,7 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
         ctx.fill();
         ctx.stroke();
         
-        ctx.fillStyle = this.documentDetected ? 'rgba(0, 0, 255, 0.8)' : 'rgba(255, 255, 0, 0.8)';
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
         for (let i = 0; i < 4; i++) {
           ctx.beginPath();
           ctx.arc(firstPoint[i * 2], firstPoint[i * 2 + 1], 8, 0, 2 * Math.PI);
@@ -258,6 +282,7 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
         this.detectionStableCount = 0;
         this.documentDetected = false;
         this.autoCaptureFeedback = '';
+        this.autoCaptureTriggered = false;
       }
 
     } catch (error) {
@@ -271,6 +296,12 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
       if (hierarchy) hierarchy.delete();
       if (contours) contours.delete();
     }
+  }
+
+  private calculateImageQuality(gray: any) {
+    this.lastSharp = this.isSharp(gray);
+    this.lastWellLit = this.isWellLit(gray);
+    this.imageQuality = (this.lastSharp ? 50 : 0) + (this.lastWellLit ? 50 : 0);
   }
 
   private isSharp(gray: any): boolean {
@@ -315,26 +346,29 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private attemptAutoCapture(gray: any) {
-    if (this.detectionStableCount < this.STABLE_THRESHOLD) {
-      this.autoCaptureFeedback = 'Hold steady...';
+  private attemptAutoCapture() {
+    if (this.autoCaptureTriggered) {
+      this.autoCaptureFeedback = '✓ Auto-captured';
       return;
     }
 
-    const sharp = this.isSharp(gray);
-    if (!sharp) {
+    this.autoCaptureFeedback = 'Hold steady...';
+
+    if (!this.lastSharp) {
       this.autoCaptureFeedback = 'Image is blurry';
       return;
     }
 
-    const wellLit = this.isWellLit(gray);
-    if (!wellLit) {
+    if (!this.lastWellLit) {
       this.autoCaptureFeedback = 'Adjust lighting';
       return;
     }
 
-    this.autoCaptureFeedback = '✓ Auto-capturing...';
-    this.captureImage();
+    if (!this.autoCaptureTriggered && this.imageQuality === 100) {
+      this.autoCaptureFeedback = '✓ Auto-capturing...';
+      this.captureImage();
+      this.autoCaptureTriggered = true;
+    }
   }
   
   private cleanup() {
@@ -371,6 +405,11 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
 
     // Provide user feedback
     this.showCaptureFlash();
+
+    if (this.autoCaptureEnabled) {
+      this.autoCaptureTriggered = true;
+      this.autoCaptureFeedback = '✓ Auto-captured';
+    }
   }
 
   private showCaptureFlash() {
