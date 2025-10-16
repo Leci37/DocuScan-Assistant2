@@ -23,7 +23,7 @@ Here’s a breakdown of the key files:
 The colored boxes you see are visual feedback to the user about the status of the document detection.
 
   * **Yellow Box**: A yellow box, as shown in the image below, indicates that the application has detected a shape that could be a document, but it is not yet stable. The scanner is still trying to get a clear and steady view.
-  <img src="docu-scan-app\img\captura_Edge_Detection_1_yellow.jpeg" height="450" >
+  * <img src="docu-scan-app\img\captura_Edge_Detection_1_yellow.jpeg" height="450" >
 
   * **Green Box**: A green box signifies that the document has been successfully detected and the image is stable. This indicates that the scanner is ready to capture a clear image. When the box turns green, the auto-capture feature would typically trigger the capture.
   * <img src="docu-scan-app\img\captura_Edge_Detection_2_gren.jpeg" height="450" >
