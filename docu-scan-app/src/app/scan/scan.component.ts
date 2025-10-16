@@ -256,7 +256,7 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
 
         ctx.strokeStyle = 'rgba(0, 255, 0, 0.8)';
         ctx.lineWidth = 4;
-        ctx.fillStyle = 'rgba(255, 255, 0, 0.2)';
+        ctx.fillStyle = 'rgba(255, 255, 0, 0.4)';
 
         ctx.beginPath();
         const firstPoint = bestContour.data32S;
