@@ -285,15 +285,10 @@ private detectDocument() {
 
   // Public method for template
   captureImage() {
-    if (!this.documentDetected) {
-      console.warn('No document detected');
-      return;
-    }
-
     const canvas = this.canvasElement.nativeElement;
     const dataUrl = canvas.toDataURL('image/png');
-    
-    console.log('Document captured');
+
+    console.log('Image captured');
     
     // Trigger download
     const link = document.createElement('a');
