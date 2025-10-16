@@ -23,10 +23,10 @@ Here’s a breakdown of the key files:
 The colored boxes you see are visual feedback to the user about the status of the document detection.
 
   * **Yellow Box**: A yellow box, as shown in the image below, indicates that the application has detected a shape that could be a document, but it is not yet stable. The scanner is still trying to get a clear and steady view.
-  <img src="docdocu-scan-app\img\captura_Edge_Detection_1_yellow.jpeg">
+    <img src="docdocu-scan-app/img/captura_Edge_Detection_1_yellow.jpeg" alt="Edge detection showing yellow guide box" height="450">
 
   * **Green Box**: A green box signifies that the document has been successfully detected and the image is stable. This indicates that the scanner is ready to capture a clear image. When the box turns green, the auto-capture feature would typically trigger the capture.
-  * <img src="docdocu-scan-app\img\captura_Edge_Detection_2_gren.jpeg">
+    <img src="docdocu-scan-app/img/captura_Edge_Detection_2_gren.jpeg" alt="Edge detection showing green guide box" height="450">
 
 This color change is controlled by the `documentDetected` property in `scan.component.ts`. The `detectionStableCount` variable tracks how many consecutive frames the document has been detected in. Once this count reaches a certain threshold (`STABLE_THRESHOLD`), `documentDetected` is set to `true`, and the box turns from yellow to green.
 
