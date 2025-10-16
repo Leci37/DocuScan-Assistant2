@@ -3,8 +3,8 @@
   <canvas #canvas></canvas>
   
   <div class="controls">
-    <button (click)="captureImage()" [disabled]="!documentDetected">
-      Capture Document
+    <button (click)="captureImage()">
+      📸 Captura
     </button>
     <div class="status" *ngIf="documentDetected">
       ✓ Document detected

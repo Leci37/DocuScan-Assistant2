@@ -26,18 +26,19 @@ canvas {
 
 .controls {
   position: absolute;
-  bottom: 30px;
+  bottom: 80px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 15px;
 }
 
 button {
   padding: 15px 30px;
-  font-size: 16px;
+  font-size: 18px;
+  font-weight: bold;
   background: #4caf50;
   color: white;
   border: none;
@@ -45,9 +46,12 @@ button {
   cursor: pointer;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
   transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-button:hover:not(:disabled) {
+button:hover {
   background: #45a049;
   transform: scale(1.05);
 }
