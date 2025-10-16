@@ -21,8 +21,12 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
 
   // Public properties for template
   documentDetected = false;
+  autoCaptureFeedback = '';
   private detectionStableCount = 0;
-  private readonly STABLE_THRESHOLD = 5; // Number of consecutive frames needed
+  private readonly STABLE_THRESHOLD = 10; // Frames needed for stability
+  private readonly SHARPNESS_THRESHOLD = 50; // Adjust as needed
+  private readonly LIGHTING_THRESHOLD_LOW = 50;
+  private readonly LIGHTING_THRESHOLD_HIGH = 200;
 
   constructor(@Inject(PLATFORM_ID) private platformId: Object) {}
 
@@ -134,9 +138,7 @@ export class ScanComponent implements AfterViewInit, OnDestroy {
     processFrame();
   }
 
-// In src/app/scan/scan.component.ts
-
-private detectDocument() {
+  private detectDocument() {
     const video = this.videoElement.nativeElement;
     const canvas = this.canvasElement.nativeElement;
     const ctx = canvas.getContext('2d');
@@ -222,14 +224,15 @@ private detectDocument() {
       
       if (bestContour) {
         this.detectionStableCount++;
-        
+
         if (this.detectionStableCount >= this.STABLE_THRESHOLD) {
           this.documentDetected = true;
+          this.attemptAutoCapture(gray);
         }
 
-        ctx.strokeStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
+        ctx.strokeStyle = this.documentDetected ? 'rgba(0, 0, 255, 0.8)' : 'rgba(255, 255, 0, 0.8)';
         ctx.lineWidth = 4;
-        ctx.fillStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 255, 0, 0.2)';
+        ctx.fillStyle = this.documentDetected ? 'rgba(0, 0, 255, 0.2)' : 'rgba(255, 255, 0, 0.2)';
 
         ctx.beginPath();
         const firstPoint = bestContour.data32S;
@@ -243,7 +246,7 @@ private detectDocument() {
         ctx.fill();
         ctx.stroke();
         
-        ctx.fillStyle = this.documentDetected ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
+        ctx.fillStyle = this.documentDetected ? 'rgba(0, 0, 255, 0.8)' : 'rgba(255, 255, 0, 0.8)';
         for (let i = 0; i < 4; i++) {
           ctx.beginPath();
           ctx.arc(firstPoint[i * 2], firstPoint[i * 2 + 1], 8, 0, 2 * Math.PI);
@@ -254,6 +257,7 @@ private detectDocument() {
       } else {
         this.detectionStableCount = 0;
         this.documentDetected = false;
+        this.autoCaptureFeedback = '';
       }
 
     } catch (error) {
@@ -267,6 +271,70 @@ private detectDocument() {
       if (hierarchy) hierarchy.delete();
       if (contours) contours.delete();
     }
+  }
+
+  private isSharp(gray: any): boolean {
+    let laplacian: any = null;
+    let mean: any = null;
+    let stdDev: any = null;
+    try {
+      laplacian = new cv.Mat();
+      cv.Laplacian(gray, laplacian, cv.CV_64F);
+
+      mean = new cv.Mat();
+      stdDev = new cv.Mat();
+      cv.meanStdDev(laplacian, mean, stdDev);
+
+      const variance = stdDev.data64F[0] * stdDev.data64F[0];
+      return variance > this.SHARPNESS_THRESHOLD;
+    } finally {
+      if (laplacian) laplacian.delete();
+      if (mean) mean.delete();
+      if (stdDev) stdDev.delete();
+    }
+  }
+
+  private isWellLit(gray: any): boolean {
+    let hist: any = null;
+    let mask: any = null;
+    let srcVec: any = null;
+    try {
+      srcVec = new cv.MatVector();
+      srcVec.push_back(gray);
+      hist = new cv.Mat();
+      mask = new cv.Mat();
+
+      cv.calcHist(srcVec, [0], mask, hist, [256], [0, 255]);
+      const mean = cv.mean(gray, mask)[0];
+
+      return mean > this.LIGHTING_THRESHOLD_LOW && mean < this.LIGHTING_THRESHOLD_HIGH;
+    } finally {
+      if (hist) hist.delete();
+      if (mask) mask.delete();
+      if (srcVec) srcVec.delete();
+    }
+  }
+
+  private attemptAutoCapture(gray: any) {
+    if (this.detectionStableCount < this.STABLE_THRESHOLD) {
+      this.autoCaptureFeedback = 'Hold steady...';
+      return;
+    }
+
+    const sharp = this.isSharp(gray);
+    if (!sharp) {
+      this.autoCaptureFeedback = 'Image is blurry';
+      return;
+    }
+
+    const wellLit = this.isWellLit(gray);
+    if (!wellLit) {
+      this.autoCaptureFeedback = 'Adjust lighting';
+      return;
+    }
+
+    this.autoCaptureFeedback = '✓ Auto-capturing...';
+    this.captureImage();
   }
   
   private cleanup() {

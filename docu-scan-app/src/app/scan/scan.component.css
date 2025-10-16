@@ -59,10 +59,11 @@ button:disabled {
 }
 
 .status {
-  background: rgba(76, 175, 80, 0.9);
+  background: rgba(0, 0, 255, 0.8);
   color: white;
   padding: 8px 16px;
   border-radius: 20px;
   font-size: 14px;
   font-weight: bold;
+  text-align: center;
 }
